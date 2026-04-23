@@ -3,10 +3,10 @@
 
 ---
 
-## BLOQUE 1 — Security Scout (agente personalizado)
+## BLOQUE 1 — Segurata (agente personalizado)
 
 ### Activar el agente
-En Copilot Chat → selector de agentes (abajo a la derecha) → Security Scout
+En Copilot Chat → selector de agentes (abajo a la derecha) → segurata.md
 
 ### Prompt 1: Auditoría completa
 ```

@@ -124,7 +124,7 @@ def get_usuario(user_id: int):
 def buscar_usuario(nombre: str):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("SELECT * FROM usuarios WHERE nombre LIKE ?", (f"%{nombre}%",))
+    c.execute(f"SELECT * FROM usuarios WHERE nombre LIKE '%{nombre}%'") # BUG: vulnerable a SQL Injection
     usuarios = c.fetchall()
     conn.close()
     return {"usuarios": usuarios}
@@ -181,7 +181,7 @@ def borrar_tarea(tarea_id: int):
 # ─────────────────────────────────────────────
 
 @app.get("/admin/usuarios")
-def get_todos_usuarios(secret: str = ""):
+def get_todos_usuarios(secret: str = ""): # Header viaje en la url debería ser def get_todos_usuarios(authorization: str = Header(None))
     # BUG: protección trivial con query param — fácil de saltarse
     if secret != API_SECRET:
         raise HTTPException(status_code=403, detail="No autorizado")
