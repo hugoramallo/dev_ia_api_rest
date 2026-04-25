@@ -47,15 +47,20 @@ def test_password_no_se_devuelve_en_respuesta():
 
 
 def test_password_no_se_guarda_en_plano():
-    # FALLA — password sin hashear
+    import sqlite3 as _sqlite3
+    import hashlib
+    import main
     client.post("/usuarios", json={
         "nombre": "Hugo", "email": "hugo@test.com",
         "password": "secreto123", "rol": "user"
     })
-    r = client.get("/usuarios/1")
-    data = r.json()
-    if "password" in data:
-        assert data["password"] != "secreto123", "Password no debería guardarse en plano"
+    conn = _sqlite3.connect(main.DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT password FROM usuarios WHERE nombre = 'Hugo'")
+    stored = c.fetchone()[0]
+    conn.close()
+    assert stored != "secreto123", "Password no debería guardarse en plano"
+    assert stored == hashlib.sha256("secreto123".encode()).hexdigest(), "Password debería estar hasheada con SHA-256"
 
 
 def test_busqueda_no_vulnerable_sql_injection():
@@ -70,23 +75,35 @@ def test_busqueda_no_vulnerable_sql_injection():
 # ─────────────────────────────────────────────
 
 def test_crear_tarea_basico():
+    import os
+    secret = os.environ.get("API_SECRET", "test-secret-para-tests")
     r = client.post("/tareas", json={
         "titulo": "Revisar PR",
         "descripcion": "Revisar el PR de Hugo",
         "usuario": "ana",
         "prioridad": "normal"
-    })
+    }, headers={"authorization": secret})
     assert r.status_code == 200
 
 
+def test_crear_tarea_sin_auth_bloqueada():
+    r = client.post("/tareas", json={
+        "titulo": "Tarea sin auth",
+        "descripcion": "No debería crearse",
+        "usuario": "ana"
+    })
+    assert r.status_code == 401, "Crear tarea sin autenticación debería devolver 401"
+
+
 def test_prioridad_invalida_rechazada():
-    # FALLA — no hay validación de prioridad
+    import os
+    secret = os.environ.get("API_SECRET", "test-secret-para-tests")
     r = client.post("/tareas", json={
         "titulo": "Test",
         "descripcion": "Test",
         "usuario": "hugo",
         "prioridad": "MEGA_URGENTE_AHORA"
-    })
+    }, headers={"authorization": secret})
     assert r.status_code == 422, "Prioridad inválida debería rechazarse"
 
 
@@ -111,6 +128,15 @@ def test_admin_sin_secret_bloqueado():
 
 
 def test_admin_secret_en_url_es_inseguro():
-    # FALLA — el secret viaja en la URL
+    # El secret en query param NO debe funcionar — ahora se usa Header
     r = client.get("/admin/usuarios?secret=supersecreto123")
     assert r.status_code == 403, "El secret en URL es inseguro y no debería funcionar"
+
+
+def test_admin_con_header_correcto():
+    import os
+    secret = os.environ.get("API_SECRET", "test-secret-para-tests")
+    r = client.get("/admin/usuarios", headers={"authorization": secret})
+    assert r.status_code == 200
+    for u in r.json().get("usuarios", []):
+        assert "password" not in u, "Admin no debería devolver passwords"

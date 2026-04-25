@@ -3,14 +3,19 @@ API de gestión de tareas — Proyecto de entrenamiento Clase 2
 Akkodis | Hugo Ramallo
 """
 
+import os
+import hashlib
 import sqlite3
 import logging
 from datetime import datetime
-from fastapi import FastAPI, HTTPException
+from typing import Literal
+from fastapi import FastAPI, HTTPException, Header
 from pydantic import BaseModel
 
-# BUG 1: SECRET hardcodeado — debería estar en variable de entorno
-API_SECRET = "supersecreto123"
+# FIX 1: SECRET leído desde variable de entorno
+API_SECRET = os.environ.get("API_SECRET")
+if not API_SECRET:
+    raise RuntimeError("La variable de entorno API_SECRET no está definida")
 DB_PATH = "tareas.db"
 
 # BUG 2: Logger que expone datos sensibles
@@ -18,6 +23,12 @@ logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Tareas API")
+
+
+def verificar_auth(authorization: str = Header(None)):
+    """Dependencia reutilizable que valida el header Authorization."""
+    if authorization != API_SECRET:
+        raise HTTPException(status_code=401, detail="No autorizado")
 
 
 # ─────────────────────────────────────────────
@@ -28,7 +39,7 @@ class Tarea(BaseModel):
     titulo: str
     descripcion: str
     usuario: str
-    prioridad: str = "normal"
+    prioridad: Literal["normal", "alta", "urgente"] = "normal"
 
 
 class Usuario(BaseModel):
@@ -80,15 +91,17 @@ init_db()
 
 @app.post("/usuarios")
 def crear_usuario(usuario: Usuario):
-    # BUG: loguea la password en texto plano
-    logger.debug(f"Creando usuario: {usuario.nombre}, password: {usuario.password}")
-    
+    # FIX 2: log sin exponer password
+    logger.debug(f"Creando usuario: {usuario.nombre}")
+
+    # FIX 3: password hasheada con SHA-256
+    hashed_pw = hashlib.sha256(usuario.password.encode()).hexdigest()
+
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    # BUG: password sin hashear
     c.execute(
         "INSERT INTO usuarios (nombre, email, password, rol) VALUES (?, ?, ?, ?)",
-        (usuario.nombre, usuario.email, usuario.password, usuario.rol)
+        (usuario.nombre, usuario.email, hashed_pw, usuario.rol)
     )
     conn.commit()
     user_id = c.lastrowid
@@ -105,12 +118,11 @@ def get_usuario(user_id: int):
     conn.close()
     if not usuario:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
-    # BUG: devuelve la password en la respuesta
+    # FIX 4: nunca devolver la password
     return {
         "id": usuario[0],
         "nombre": usuario[1],
         "email": usuario[2],
-        "password": usuario[3],  # BUG: nunca devolver password
         "rol": usuario[4]
     }
 
@@ -124,7 +136,8 @@ def get_usuario(user_id: int):
 def buscar_usuario(nombre: str):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute(f"SELECT * FROM usuarios WHERE nombre LIKE '%{nombre}%'") # BUG: vulnerable a SQL Injection
+    # FIX 5: query parametrizada — no más SQL Injection
+    c.execute("SELECT * FROM usuarios WHERE nombre LIKE ?", (f"%{nombre}%",))
     usuarios = c.fetchall()
     conn.close()
     return {"usuarios": usuarios}
@@ -132,13 +145,12 @@ def buscar_usuario(nombre: str):
 
 # ─────────────────────────────────────────────
 # TAREAS
-# BUG 6: Sin autenticación — cualquiera puede crear/borrar tareas
-# BUG 7: Sin validación de prioridad
+# FIX 6: Autenticación requerida en todos los endpoints de tareas
 # ─────────────────────────────────────────────
 
 @app.post("/tareas")
-def crear_tarea(tarea: Tarea):
-    # BUG: no hay autenticación — cualquiera puede crear tareas
+def crear_tarea(tarea: Tarea, authorization: str = Header(None)):
+    verificar_auth(authorization)
     fecha = datetime.now().isoformat()
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
@@ -154,8 +166,8 @@ def crear_tarea(tarea: Tarea):
 
 
 @app.get("/tareas")
-def get_tareas():
-    # BUG: no hay autenticación — cualquiera ve todas las tareas
+def get_tareas(authorization: str = Header(None)):
+    verificar_auth(authorization)
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("SELECT * FROM tareas")
@@ -165,8 +177,8 @@ def get_tareas():
 
 
 @app.delete("/tareas/{tarea_id}")
-def borrar_tarea(tarea_id: int):
-    # BUG: no hay autenticación — cualquiera puede borrar tareas de otros
+def borrar_tarea(tarea_id: int, authorization: str = Header(None)):
+    verificar_auth(authorization)
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("DELETE FROM tareas WHERE id = ?", (tarea_id,))
@@ -181,14 +193,14 @@ def borrar_tarea(tarea_id: int):
 # ─────────────────────────────────────────────
 
 @app.get("/admin/usuarios")
-def get_todos_usuarios(secret: str = ""): # Header viaje en la url debería ser def get_todos_usuarios(authorization: str = Header(None))
-    # BUG: protección trivial con query param — fácil de saltarse
-    if secret != API_SECRET:
+def get_todos_usuarios(authorization: str = Header(None)):
+    # FIX 7: secret en Header, no en query param; nunca exponer passwords
+    if authorization != API_SECRET:
         raise HTTPException(status_code=403, detail="No autorizado")
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("SELECT * FROM usuarios")
-    usuarios = c.fetchall()
+    c.execute("SELECT id, nombre, email, rol FROM usuarios")
+    rows = c.fetchall()
     conn.close()
-    # BUG: devuelve passwords de todos los usuarios
+    usuarios = [{"id": r[0], "nombre": r[1], "email": r[2], "rol": r[3]} for r in rows]
     return {"usuarios": usuarios}

@@ -47,3 +47,5 @@ Para cada problema:
 Al final:
 - Resumen con total por nivel
 - Los 3 problemas más urgentes a arreglar primero
+
+Envia toda esta información al agente refactorizador para que te ayude a corregir los problemas encontrados.
